@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SOP MASTER: REAL MATCH CRAWLER
-Tự động dọn dữ liệu cũ và cào lịch thi đấu thực tế Châu Âu hôm nay
+SOP MASTER: LIVE DATA INGESTION PIPELINE
+Cào lịch thi đấu bóng đá Châu Âu thực tế hôm nay -> Nạp trực tiếp vào Supabase
 """
 
 import json
@@ -26,9 +26,11 @@ LEAGUES = [
 ]
 
 def clear_old_data():
-    """Xóa sạch bảng trước khi nạp"""
     endpoint = f"{SUPABASE_URL}/rest/v1/sop_master_matches?match_id=neq.null"
-    headers = {"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {SUPABASE_ANON_KEY}"}
+    headers = {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {SUPABASE_ANON_KEY}"
+    }
     try:
         req = urllib.request.Request(endpoint, headers=headers, method="DELETE")
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -42,11 +44,15 @@ def fetch_real_matches():
     real_fixtures = []
     stt = 1
 
+    headers_user_agent = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     for league_code, league_name in LEAGUES:
         url = f"[suspicious link removed]{league_code}/scoreboard?dates={today_str}"
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            req = urllib.request.Request(url, headers=headers_user_agent)
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 events = data.get("events", [])
                 
@@ -73,8 +79,12 @@ def fetch_real_matches():
                     status_type = ev.get("status", {}).get("type", {}).get("name", "")
                     ft_score = None
                     if status_type in ["STATUS_IN_PROGRESS", "STATUS_FINAL", "STATUS_FULL_TIME"]:
-                        h_sc = competitors[0].get("score", "0") if competitors[0].get("homeAway") == "home" else competitors[1].get("score", "0")
-                        a_sc = competitors[1].get("score", "0") if competitors[0].get("homeAway") == "home" else competitors[0].get("score", "0")
+                        h_sc, a_sc = "0", "0"
+                        for c in competitors:
+                            if c.get("homeAway") == "home":
+                                h_sc = c.get("score", "0")
+                            else:
+                                a_sc = c.get("score", "0")
                         ft_score = f"{h_sc} - {a_sc}"
 
                     real_fixtures.append({
@@ -105,13 +115,15 @@ def fetch_real_matches():
                     })
                     stt += 1
         except Exception as e:
-            logging.warning(f"Lỗi cào {league_name}: {e}")
+            logging.warning(f"Cảnh báo khi cào {league_name}: {e}")
 
     return real_fixtures
 
 def push_to_supabase(fixtures):
     if not fixtures:
+        logging.warning("⚠️ Không tìm thấy trận đấu bóng đá Châu Âu nào hôm nay.")
         return
+    
     endpoint = f"{SUPABASE_URL}/rest/v1/sop_master_matches"
     headers = {
         "apikey": SUPABASE_ANON_KEY,
